@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <title>Dashboard Kehadiran Siswa</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
+  <style>
+    body {
+      font-family: "Segoe UI", Tahoma, sans-serif;
+      background: #f4f6f9;
+      margin: 0;
+      padding: 20px;
+      color: #333;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: auto;
+    }
+
+    h2 {
+      text-align: center;
+      margin-bottom: 20px;
+      color: #2c3e50;
+    }
+
+    .top-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 15px;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .btn {
+      padding: 8px 14px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: bold;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .btn-refresh { background: #3498db; color: #fff; }
+    .btn-refresh:hover { background: #2980b9; }
+
+    .btn-export { background: #27ae60; color: #fff; }
+    .btn-export:hover { background: #1e8449; }
+
+    #status {
+      font-size: 14px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-weight: bold;
+    }
+
+    .status-loading { background: #f1c40f; color: #fff; }
+    .status-success { background: #2ecc71; color: #fff; }
+    .status-error   { background: #e74c3c; color: #fff; }
+    .status-empty   { background: #95a5a6; color: #fff; }
+
+    .filter-box {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 15px;
+    }
+
+    .filter-box input {
+      padding: 6px 10px;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      flex: 1;
+    }
+
+    .table-wrapper {
+      overflow-x: auto;
+      border-radius: 10px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+      transition: 0.2s ease;
+      min-width: 800px; /* agar kolom rapi di hp */
+    }
+
+    table thead {
+      background: #3498db;
+      color: #fff;
+    }
+
+    table th, table td {
+      padding: 12px;
+      text-align: left;
+    }
+
+    table tbody tr:nth-child(even) { background: #f9f9f9; }
+    table tbody tr:hover { background: #ecf6ff; transition: 0.2s; }
+
+    .pagination {
+      margin-top: 15px;
+      display: flex;
+      justify-content: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .pagination button {
+      padding: 6px 12px;
+      border: none;
+      border-radius: 6px;
+      background: #3498db;
+      color: #fff;
+      cursor: pointer;
+    }
+
+    .pagination button:disabled {
+      background: #bdc3c7;
+      cursor: not-allowed;
+    }
+
+    .pagination button:hover:not(:disabled) { background: #2980b9; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>📊 Dashboard Kehadiran Siswa SDN 2 Karangmangu</h2>
+
+    <div class="top-bar">
+      <div>
+        <button class="btn btn-refresh" onclick="loadData()">🔄 Refresh Data</button>
+        <button class="btn btn-export" onclick="exportPDF()">📄 Export PDF</button>
+      </div>
+      <p id="status" class="status-empty">Status: Menunggu koneksi...</p>
+    </div>
+
+    <div class="filter-box">
+      <input type="text" id="filterNIS" placeholder="Cari berdasarkan NIS..." onkeyup="applyFilters()">
+      <input type="text" id="filterNama" placeholder="Cari berdasarkan Nama..." onkeyup="applyFilters()">
+    </div>
+
+    <div class="table-wrapper">
+      <table id="dataTable">
+        <thead>
+          <tr>
+            <th>No</th>
+            <th>Nama</th>
+            <th>NIS</th>
+            <th>Kelas</th>
+            <th>Masuk</th>
+            <th>Pulang</th>
+            <th>Terlambat</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="pagination" id="pagination"></div>
+  </div>
+
+  <script>
+    const SHEET_ID = "19t9XGTnwnGhmdnfeQrI_-IoDbFmDYfUrk5vuZ4tAtPY";
+    const SHEET_NAME = "Rekap_Sheet1";
+    const API_KEY = "AIzaSyDGa_l9kI1c2mD-4GU-hvrogSYk-ZL-TZ0";
+
+    let allData = [];
+    let filteredData = [];
+    let currentPage = 1;
+    const rowsPerPage = 10;
+
+    function setStatus(message, type) {
+      const statusEl = document.getElementById("status");
+      statusEl.innerText = message;
+      statusEl.className = type;
+    }
+
+    async function loadData() {
+      const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${SHEET_NAME}?key=${API_KEY}`;
+      setStatus("⏳ Mengambil data...", "status-loading");
+
+      try {
+        const res = await fetch(url);
+        const data = await res.json();
+
+        if (!data.values) {
+          setStatus("⚠️ Tidak ada data ditemukan!", "status-empty");
+          return;
+        }
+
+        allData = data.values.slice(1).map((row, i) => ({
+          no: i + 1,
+          nama: row[0] || "",
+          nis: row[1] || "",
+          kelas: row[2] || "",
+          masuk: row[3] || "",
+          pulang: row[4] || "",
+          terlambat: row[5] || ""
+        }));
+
+        filteredData = [...allData];
+        currentPage = 1;
+        renderTable();
+        setStatus("✅ Data berhasil dimuat!", "status-success");
+      } catch (err) {
+        setStatus("❌ Error: " + err, "status-error");
+      }
+    }
+
+    function applyFilters() {
+      const nisFilter = document.getElementById("filterNIS").value.toLowerCase();
+      const namaFilter = document.getElementById("filterNama").value.toLowerCase();
+
+      filteredData = allData.filter(row => 
+        row.nis.toLowerCase().includes(nisFilter) &&
+        row.nama.toLowerCase().includes(namaFilter)
+      );
+
+      currentPage = 1;
+      renderTable();
+    }
+
+    function renderTable() {
+      const tbody = document.querySelector("#dataTable tbody");
+      tbody.innerHTML = "";
+
+      const start = (currentPage - 1) * rowsPerPage;
+      const end = start + rowsPerPage;
+      const pageData = filteredData.slice(start, end);
+
+      pageData.forEach(row => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${row.no}</td>
+          <td>${row.nama}</td>
+          <td>${row.nis}</td>
+          <td>${row.kelas}</td>
+          <td>${row.masuk}</td>
+          <td>${row.pulang}</td>
+          <td>${row.terlambat}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      renderPagination();
+    }
+
+    function renderPagination() {
+      const totalPages = Math.ceil(filteredData.length / rowsPerPage);
+      const pagination = document.getElementById("pagination");
+      pagination.innerHTML = "";
+
+      const prevBtn = document.createElement("button");
+      prevBtn.textContent = "⏮ Prev";
+      prevBtn.disabled = currentPage === 1;
+      prevBtn.onclick = () => { currentPage--; renderTable(); };
+      pagination.appendChild(prevBtn);
+
+      for (let i = 1; i <= totalPages; i++) {
+        const btn = document.createElement("button");
+        btn.textContent = i;
+        btn.disabled = i === currentPage;
+        btn.onclick = () => { currentPage = i; renderTable(); };
+        pagination.appendChild(btn);
+      }
+
+      const nextBtn = document.createElement("button");
+      nextBtn.textContent = "Next ⏭";
+      nextBtn.disabled = currentPage === totalPages;
+      nextBtn.onclick = () => { currentPage++; renderTable(); };
+      pagination.appendChild(nextBtn);
+    }
+
+    function exportPDF() {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF();
+
+      doc.text("Laporan Kehadiran Siswa SDN 2 Karangmangu", 14, 15);
+      doc.autoTable({
+        head: [['No', 'Nama', 'NIS', 'Kelas', 'Masuk', 'Pulang', 'Terlambat']],
+        body: filteredData.map(r => [r.no, r.nama, r.nis, r.kelas, r.masuk, r.pulang, r.terlambat]),
+        startY: 20,
+        theme: 'striped',
+        styles: { fontSize: 8 }
+      });
+
+      doc.save("laporan-kehadiran.pdf");
+    }
+
+    window.onload = loadData;
+  </script>
+</body>
+</html>
